@@ -13,7 +13,9 @@ func init() {
 }
 
 type BayesianNode interface {
+	TruthValue() string
 	Sample() (string, float64, error)
+	SetSample(string) error
 	Reset()
 	AddChild(BayesianNode)
 	AddParent(BayesianNode) error
@@ -24,11 +26,15 @@ type BayesianNode interface {
 	GetChildren() BayNodes
 	GetParents() BayNodes
 	GetParentNames() []string
+	String() string
 	Id() int
 	SetId(int)
 	ValidateParents(parents []string) bool
-	ProbTruth() float64
+	TruthProb() float64
+	FalseProb() float64
 	ValidateCPT() error
+	MarkovSample() float64
+	SetTruthValue(string)
 }
 
 func NewRootNode(name string, dist float64) BayesianNode {
@@ -106,7 +112,7 @@ func (self *Node) GetParentNames() []string {
 	return self.parentNames
 }
 
-func (self *Node) ProbTruth() float64 {
+func (self *Node) TruthProb() float64 {
 	if len(self.parentIds) == 0 {
 		return self.cpt["T"]
 	}
@@ -121,10 +127,34 @@ func (self *Node) ProbTruth() float64 {
 	return val
 }
 
+func (self *Node) FalseProb() float64 {
+	if len(self.parentIds) == 0 {
+		return 1 - self.cpt["T"]
+	}
+
+	key := falseKey(len(self.parentIds))
+
+	val, ok := self.cpt[key]
+	if !ok {
+		return 0.0
+	}
+
+	return 1 - val
+}
+
 func truthKey(length int) string {
 	var buffer bytes.Buffer
 	for i := 0; i < length; i++ {
 		buffer.WriteString("T")
+	}
+
+	return buffer.String()
+}
+
+func falseKey(length int) string {
+	var buffer bytes.Buffer
+	for i := 0; i < length; i++ {
+		buffer.WriteString("F")
 	}
 
 	return buffer.String()
@@ -182,6 +212,19 @@ func (self *Node) Reset() {
 	self.prob = 0.0
 }
 
+func (self *Node) SetSample(value string) error {
+	if value != "T" && value != "F" {
+		return fmt.Errorf("Value '%s' not a valid truth assignment\n", value)
+	}
+	self.sample = value
+
+	return nil
+}
+
+func (self *Node) TruthValue() string {
+	return self.sample
+}
+
 func (self *Node) Sample() (string, float64, error) {
 	// if sample has already been calculated
 	// return cached value
@@ -204,11 +247,11 @@ func (self *Node) Sample() (string, float64, error) {
 	// recursively sample parents
 	var buffer bytes.Buffer
 	for _, id := range self.parentIds {
-		s, _, err := id.Sample()
+		s := id.TruthValue()
 
-		if err != nil {
-			return "", 0.0, err
-		}
+		// if err != nil {
+		// 	return "", 0.0, err
+		// }
 		// cache parent samples
 		// self.parentSampleCache[i] = s
 		// concat the samples into a key
@@ -236,11 +279,97 @@ func (self *Node) Sample() (string, float64, error) {
 	return self.sample, self.prob, nil
 }
 
+func (self *Node) MarkovSample() float64 {
+	// if sample has already been calculated
+	// return cached value
+	var buffer bytes.Buffer
+	if self.sample != "" {
+		// if sample has already been set
+		for _, id := range self.parentIds {
+			s, _, err := id.Sample()
+			if err != nil {
+				return 0.0
+			}
+			// cache parent samples
+			// self.parentSampleCache[i] = s
+			// concat the samples into a key
+			// which is used to store the values
+			buffer.WriteString(s)
+		}
+
+		// Sample probability given conditions
+		// look up the probability in the CPT
+		key := buffer.String()
+		prob, _ := self.cpt[key]
+
+		if self.sample == "T" {
+			return prob
+		}
+
+		return 1 - prob
+
+	}
+	// rootNode
+	if len(self.parentIds) == 0 {
+		self.prob = rand.Float64()
+		if self.prob > self.cpt["T"] {
+			self.sample = "F"
+			return self.FalseProb()
+		} else {
+			self.sample = "T"
+			return self.TruthProb()
+		}
+	}
+	// Not a rootnode
+
+	// recursively sample parents
+	// var buffer bytes.Buffer
+	for _, id := range self.parentIds {
+		s, _, err := id.Sample()
+		if err != nil {
+			return 0.0
+		}
+		// cache parent samples
+		// self.parentSampleCache[i] = s
+		// concat the samples into a key
+		// which is used to store the values
+		buffer.WriteString(s)
+	}
+
+	// Sample probability given conditions
+	// look up the probability in the CPT
+	key1 := buffer.String()
+	prob1, ok := self.cpt[key1]
+	if !ok {
+		return 0.0
+	}
+
+	self.prob = rand.Float64()
+	fmt.Println("%s: updating sample to \n", self.name)
+	if self.prob < prob1 {
+		self.sample = "T"
+		// fmt.Println("T")
+		return prob1
+	} else {
+		self.sample = "F"
+		// fmt.Println("F")
+		return 1 - prob1
+	}
+	return 0.0
+}
+
 func (self *Node) IsRoot() bool {
 	if len(self.parentIds) == 0 {
 		return true
 	}
 	return false
+}
+
+func (self *Node) SetTruthValue(value string) {
+
+	self.sample = value
+	self.prob = 0.0
+
 }
 
 func (self *Node) ValidateCPT() error {
@@ -253,6 +382,15 @@ func (self *Node) ValidateCPT() error {
 		}
 		return nil
 	}
+
+	for k, _ := range self.cpt {
+		if len(k) != self.NumParents() {
+			return fmt.Errorf("%s's CPT has wrong key-length: exp: %d != %d act (cpt: %v)",
+				self.name, self.NumParents(), len(k), self.cpt)
+		}
+		break
+	}
+
 	exptectedCPTSize := int(math.Pow(2, float64(self.NumParents())))
 	// fmt.Printf("%s: exp: %v\n", self.name, exptectedCPTSize)
 	if len(self.cpt) != exptectedCPTSize {

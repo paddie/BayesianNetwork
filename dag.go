@@ -3,8 +3,8 @@ package BayesianNetwork
 import (
 	"bytes"
 	"fmt"
-	// "sort"
 	// "math"
+	"sort"
 	// "math/rand"
 	// "time"
 )
@@ -42,27 +42,156 @@ func NewBayesianNetwork(nodes ...BayesianNode) (*BayesianNetwork, error) {
 		bn.addConnections(node.GetParentNames(), node.Name())
 	}
 
+	// validate that CPT has the correct dimensions
+	// wrt. number of parents 
 	if err := bn.validateCPTs(); err != nil {
 		return nil, err
 	}
 
+	// index nodes in a breath first fashion
 	bn.indexNetwork()
 
 	return bn, nil
 }
 
-// func (dag *BayesianNetwork) MarkovBlanket(nodeName string) float64 {
+func (dag *BayesianNetwork) MarkovBlanketSampling(nodeName string, mapping map[string]string) map[float64]int {
 
-// }
-
-func (dag *BayesianNetwork) AncestralSampling() {
-	// to prevent recurring calls to ancestralsampling from reporting the 
-	// same result
+	node := dag.GetNode(nodeName)
+	if node == nil {
+		return nil
+	}
+	// make sure graph is reset
 	dag.Reset()
 
+	// update the graph with all the observed values
+	// from the mapping
+	dag.UpdateGraph(mapping)
+
+	results := map[float64]int{}
+
+	for i := 0; i < 100; i++ {
+		// fmt.Println(node)
+
+		// ******* numerator
+		fmt.Printf("Resetting node %v\n", node)
+		node.SetSample("")
+		// sample and set node of interest
+		numerator := node.MarkovSample()
+		fmt.Printf("Fresh Sample: %v\n", node)
+
+		// fmt.Println(node)
+
+		// fmt.Printf("  Numerator: %f\n", numerator)
+		// fmt.Printf("1)Numerator: %f\n", numerator)
+		// now sample the children given the sampled node of interest
+		for _, childNode := range node.GetChildren() {
+			numerator *= childNode.MarkovSample()
+		}
+
+		fmt.Printf("2)Numerator: %f\n", numerator)
+
+		// ******** denominator
+		denominator := 0.0
+		for _, value := range []string{"T", "F"} {
+			// set the value of node of interest to each value
+			node.SetSample(value)
+			prob := node.MarkovSample()
+			// now sample the children given the sampled node of interest
+			for _, childNode := range node.GetChildren() {
+				prob *= childNode.MarkovSample()
+			}
+			denominator += prob
+		}
+		fmt.Printf("Denominator: %f\n", denominator)
+
+		stat := numerator / denominator
+
+		results[stat] += 1
+	}
+	return results
+}
+
+// func (dag *BayesianNetwork) GetMarkovBlanket(node BayesianNode) BayNodes {
+
+// 	blanket := make(BayNodes, 0, 10)
+
+// 	// add parent nodes
+// 	blanket = append(blanket, node.GetParents()...)
+// 	// add child nodes
+// 	childNodes := node.GetChildren()
+// 	blanket = append(blanket, childNodes...)
+
+// 	// co-parents
+// 	// extremely inefficient
+// 	mm := map[int]BayesianNode{}
+// 	for _, childNode := range childNodes {
+// 		for _, parent := range childNode.GetParents() {
+// 			if parent == node {
+// 				continue
+// 			}
+// 			mm[parent.Id()] = parent
+// 		}
+// 	}
+// 	for _, childNode := range mm {
+// 		blanket = append(blanket, childNode)
+// 	}
+
+// 	return blanket
+// }
+
+// Given a truth-assignment for a number of nodes,
+// update the nodes to reflect those values
+// mapping example: map[string]string{ "X1":"F", X3:"T"}
+// - reports an error if just one of the nodes does not exist
+func (dag *BayesianNetwork) UpdateGraph(mapping map[string]string) error {
+
+	for nodeName, value := range mapping {
+		node := dag.nodes[nodeName]
+		if node == nil {
+			return fmt.Errorf("Node '%s' does not exist\n", nodeName)
+		}
+
+		if err := node.SetSample(value); err != nil {
+			return err
+		}
+	}
+	// sort.Sort(markovBlanket)
+	return nil
+}
+
+// does a complete ancestral sampling of the network
+func (dag *BayesianNetwork) AncestralSampling(nodeNames ...string) {
+	// reset graph before running
+	dag.Reset()
+
+	// generate list of all the nodes 
+	nodes, err := dag.GatherNodes(nodeNames)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	sort.Sort(nodes)
+
+	// for i := 0; i < max; {
 	for _, node := range dag.nodeIndex {
 		node.Sample()
 	}
+	// }
+}
+
+func (dag *BayesianNetwork) GatherNodes(nodeNames []string) (BayNodes, error) {
+
+	nodes := make(BayNodes, 0, len(nodeNames))
+	for _, nodeName := range nodeNames {
+		node := dag.GetNode(nodeName)
+		if node == nil {
+			return nil, fmt.Errorf("Node %s not in network", nodeName)
+		}
+		nodes = append(nodes, node)
+	}
+
+	return nodes, nil
 }
 
 func (dag *BayesianNetwork) Reset() {
@@ -71,6 +200,26 @@ func (dag *BayesianNetwork) Reset() {
 	}
 }
 
+// prints every node in the system seperately
+// - also, print assignment value, if it has been
+//   set.
+func (dag *BayesianNetwork) PrintNetwork() string {
+	if len(dag.nodeIndex) == 0 {
+		return "[]"
+	}
+
+	var buffer bytes.Buffer
+
+	buffer.WriteString(" ")
+	for _, node := range dag.nodeIndex {
+		buffer.WriteString(node.String())
+		buffer.WriteString(" ")
+	}
+
+	return fmt.Sprintf("[%v]", buffer.String())
+}
+
+// joint probability of the network
 func (dag *BayesianNetwork) JointProbability() float64 {
 	// JointProbability(NodeNames ...string) float64 {
 
@@ -82,14 +231,16 @@ func (dag *BayesianNetwork) JointProbability() float64 {
 	// sort.Sort(nodes)
 	// fmt.Println(nodes)
 
-	jointProb := 1.0
+	p := 1.0
 	for _, node := range dag.nodeIndex {
-		jointProb *= node.ProbTruth()
+		p *= node.TruthProb()
 	}
 
-	return jointProb
+	return p
 }
 
+// validate every node in the system for invalid 
+// conditional probability tables
 func (dag *BayesianNetwork) validateCPTs() error {
 	for _, node := range dag.nodes {
 		if err := node.ValidateCPT(); err != nil {
@@ -100,6 +251,9 @@ func (dag *BayesianNetwork) validateCPTs() error {
 	return nil
 }
 
+// index the graph in a breath-first fashion
+// - guarantees that every parent has an index
+//   that is larger than every one of their children
 func (dag *BayesianNetwork) indexNetwork() {
 
 	roots := make(BayNodes, 0, 5)
