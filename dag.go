@@ -9,24 +9,22 @@ import (
 	// "time"
 )
 
-const (
-	epsilon = 0.0001
-)
-
 type BayesianNetwork struct {
-	nodes map[string]BayesianNode
-	// indexOfNodes map[int]BayesianNode
+	// nodesName -> node-pointer map
+	nodes map[string]*Node
+	// connections between nodes
 	edges map[string][]string
-	// list of nodes sorted by their placement
-	// in their tree (breath first)
+	// index of nodes sorted on id
+	// - root-ids > child nodes etc..
 	// [1;len(nodes)]
-	nodeIndex []BayesianNode
+	nodeIndex BayNodes
 }
 
-func NewBayesianNetwork(nodes ...BayesianNode) (*BayesianNetwork, error) {
+// Creates a directed bayesian network from each node
+func NewBayesianNetwork(nodes ...*Node) (*BayesianNetwork, error) {
 	bn := &BayesianNetwork{
-		nodes:     make(map[string]BayesianNode, len(nodes)),
-		nodeIndex: make([]BayesianNode, 0, len(nodes)),
+		nodes:     make(map[string]*Node, len(nodes)),
+		nodeIndex: make([]*Node, 0, len(nodes)),
 		edges:     make(map[string][]string),
 	}
 
@@ -54,164 +52,166 @@ func NewBayesianNetwork(nodes ...BayesianNode) (*BayesianNetwork, error) {
 	return bn, nil
 }
 
-func (dag *BayesianNetwork) MarkovBlanketSampling(nodeName string, mapping map[string]string) map[float64]int {
+// takes the node argument of interest (X5) and the truth-value
+// mapping for the surrounding markov blanket
+// it returns the map containing the frequencies of each of the inferred values:
+func (bn *BayesianNetwork) MarkovBlanketSampling(nodeName string, mapping map[string]string, n int) (map[float64]float64, error) {
 
-	node := dag.GetNode(nodeName)
+	node := bn.GetNode(nodeName)
 	if node == nil {
-		return nil
+		return nil, fmt.Errorf("Invalid nodeName: %s", nodeName)
 	}
 	// make sure graph is reset
-	dag.Reset()
+	bn.Reset()
 
 	// update the graph with all the observed values
 	// from the mapping
-	dag.UpdateGraph(mapping)
+	bn.UpdateGraphValues(mapping)
 
-	results := map[float64]int{}
+	if node.AssignmentValue() != "" {
+		return nil, fmt.Errorf("target node '%s' cannot be defined in the mapping", node.Name())
+	}
 
-	for i := 0; i < 100; i++ {
-		// fmt.Println(node)
+	results := map[float64]float64{}
 
-		// ******* numerator
-		fmt.Printf("Resetting node %v\n", node)
-		node.SetSample("")
+	for i := 0; i < n; i++ {
+
+		// ******* numerator *******
+		// reset node of interest
+		node.SetAssignmentValue("")
 		// sample and set node of interest
-		numerator := node.MarkovSample()
-		fmt.Printf("Fresh Sample: %v\n", node)
-
-		// fmt.Println(node)
-
-		// fmt.Printf("  Numerator: %f\n", numerator)
-		// fmt.Printf("1)Numerator: %f\n", numerator)
+		_, numerator, err := node.Sample()
+		if err != nil {
+			return nil, err
+		}
 		// now sample the children given the sampled node of interest
 		for _, childNode := range node.GetChildren() {
-			numerator *= childNode.MarkovSample()
+			_, prob, err := childNode.Sample()
+			if err != nil {
+				return nil, err
+			}
+			numerator *= prob
 		}
 
-		fmt.Printf("2)Numerator: %f\n", numerator)
-
-		// ******** denominator
+		// ******** denominator *******
 		denominator := 0.0
-		for _, value := range []string{"T", "F"} {
+		for _, assign := range []string{"T", "F"} {
 			// set the value of node of interest to each value
-			node.SetSample(value)
-			prob := node.MarkovSample()
+			node.SetAssignmentValue(assign)
+			_, prob, err := node.Sample()
+			if err != nil {
+				return nil, err
+			}
 			// now sample the children given the sampled node of interest
 			for _, childNode := range node.GetChildren() {
-				prob *= childNode.MarkovSample()
+				_, prob, err := childNode.Sample()
+				if err != nil {
+					return nil, err
+				}
+				prob *= prob
 			}
 			denominator += prob
 		}
-		fmt.Printf("Denominator: %f\n", denominator)
 
 		stat := numerator / denominator
 
-		results[stat] += 1
+		results[stat] += 1.0
 	}
-	return results
+
+	for key, val := range results {
+		results[key] = val / float64(n)
+	}
+
+	return results, nil
 }
 
-// func (dag *BayesianNetwork) GetMarkovBlanket(node BayesianNode) BayNodes {
-
-// 	blanket := make(BayNodes, 0, 10)
-
-// 	// add parent nodes
-// 	blanket = append(blanket, node.GetParents()...)
-// 	// add child nodes
-// 	childNodes := node.GetChildren()
-// 	blanket = append(blanket, childNodes...)
-
-// 	// co-parents
-// 	// extremely inefficient
-// 	mm := map[int]BayesianNode{}
-// 	for _, childNode := range childNodes {
-// 		for _, parent := range childNode.GetParents() {
-// 			if parent == node {
-// 				continue
-// 			}
-// 			mm[parent.Id()] = parent
-// 		}
-// 	}
-// 	for _, childNode := range mm {
-// 		blanket = append(blanket, childNode)
-// 	}
-
-// 	return blanket
-// }
-
-// Given a truth-assignment for a number of nodes,
-// update the nodes to reflect those values
+// Given a truth-assignment for a markov blanket,
+// this method updates the nodes to reflect those values.
 // mapping example: map[string]string{ "X1":"F", X3:"T"}
 // - reports an error if just one of the nodes does not exist
-func (dag *BayesianNetwork) UpdateGraph(mapping map[string]string) error {
+func (bn *BayesianNetwork) UpdateGraphValues(mapping map[string]string) error {
 
 	for nodeName, value := range mapping {
-		node := dag.nodes[nodeName]
+		node := bn.nodes[nodeName]
 		if node == nil {
 			return fmt.Errorf("Node '%s' does not exist\n", nodeName)
 		}
-
-		if err := node.SetSample(value); err != nil {
-			return err
-		}
+		node.SetAssignmentValue(value)
 	}
-	// sort.Sort(markovBlanket)
+
 	return nil
 }
 
 // does a complete ancestral sampling of the network
-func (dag *BayesianNetwork) AncestralSampling(nodeNames ...string) {
+func (bn *BayesianNetwork) AncestralSampling(mapping map[string]string, n int) (map[string][]float64, error) {
 	// reset graph before running
-	dag.Reset()
-
-	// generate list of all the nodes 
-	nodes, err := dag.GatherNodes(nodeNames)
+	bn.Reset()
+	// update graph from mapping
+	err := bn.UpdateGraphValues(mapping)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return nil, err
 	}
-
-	sort.Sort(nodes)
-
-	// for i := 0; i < max; {
-	for _, node := range dag.nodeIndex {
-		node.Sample()
+	// backup the state so we can reset it afterwards
+	backup := make([]string, len(bn.nodeIndex))
+	for i, node := range bn.nodeIndex {
+		backup[i] = node.AssignmentValue()
 	}
-	// }
+	// initialize the stats gathering
+	stat := NewStat(bn)
+
+	for i := 0; i < n; i++ {
+
+		for _, node := range bn.nodeIndex {
+			node.Sample()
+		}
+		// update stats
+		stat.Update()
+		// reset graph with assigned values
+		for j, node := range bn.nodeIndex {
+			node.SetAssignmentValue(backup[j])
+		}
+	}
+	// cleanup
+	bn.Reset()
+	return stat.GetStats(), nil
 }
 
-func (dag *BayesianNetwork) GatherNodes(nodeNames []string) (BayNodes, error) {
+func (bn *BayesianNetwork) GatherNodes(nodeNames []string) (BayNodes, error) {
 
 	nodes := make(BayNodes, 0, len(nodeNames))
 	for _, nodeName := range nodeNames {
-		node := dag.GetNode(nodeName)
+		node := bn.GetNode(nodeName)
 		if node == nil {
 			return nil, fmt.Errorf("Node %s not in network", nodeName)
 		}
 		nodes = append(nodes, node)
 	}
 
+	// sort nodes by index value
+	sort.Sort(nodes)
+
 	return nodes, nil
 }
 
-func (dag *BayesianNetwork) Reset() {
-	for _, node := range dag.nodeIndex {
+// Reset network after runing a destructive method
+func (bn *BayesianNetwork) Reset() {
+	for _, node := range bn.nodeIndex {
 		node.Reset()
 	}
 }
 
 // prints every node in the system seperately
 // - also, print assignment value, if it has been
-//   set.
-func (dag *BayesianNetwork) PrintNetwork() string {
-	if len(dag.nodeIndex) == 0 {
+//   set. meant for DEABUG
+func (bn *BayesianNetwork) PrintNetwork() string {
+	if len(bn.nodeIndex) == 0 {
 		return "[]"
 	}
 
 	var buffer bytes.Buffer
 
 	buffer.WriteString(" ")
-	for _, node := range dag.nodeIndex {
+	for _, node := range bn.nodeIndex {
 		buffer.WriteString(node.String())
 		buffer.WriteString(" ")
 	}
@@ -220,29 +220,25 @@ func (dag *BayesianNetwork) PrintNetwork() string {
 }
 
 // joint probability of the network
-func (dag *BayesianNetwork) JointProbability() float64 {
-	// JointProbability(NodeNames ...string) float64 {
+func (bn *BayesianNetwork) JointProbability() (float64, error) {
 
-	// nodes := make(BayNodes, 0, len(NodeNames))
-	// for _, name := range NodeNames {
-	// 	nodes = append(nodes, dag.nodes[name])
-	// }
-	// // fmt.Println(nodes)
-	// sort.Sort(nodes)
-	// fmt.Println(nodes)
+	bn.Reset()
 
 	p := 1.0
-	for _, node := range dag.nodeIndex {
-		p *= node.TruthProb()
+	for _, node := range bn.nodeIndex {
+		prob, err := node.SampleWithAssignment("T")
+		if err != nil {
+			return 0.0, err
+		}
+		p *= prob
 	}
-
-	return p
+	return p, nil
 }
 
 // validate every node in the system for invalid 
 // conditional probability tables
-func (dag *BayesianNetwork) validateCPTs() error {
-	for _, node := range dag.nodes {
+func (bn *BayesianNetwork) validateCPTs() error {
+	for _, node := range bn.nodes {
 		if err := node.ValidateCPT(); err != nil {
 			return err
 		}
@@ -254,10 +250,10 @@ func (dag *BayesianNetwork) validateCPTs() error {
 // index the graph in a breath-first fashion
 // - guarantees that every parent has an index
 //   that is larger than every one of their children
-func (dag *BayesianNetwork) indexNetwork() {
+func (bn *BayesianNetwork) indexNetwork() {
 
 	roots := make(BayNodes, 0, 5)
-	for _, node := range dag.nodes {
+	for _, node := range bn.nodes {
 		if node.NumParents() != 0 {
 			continue
 			// children := append(children, node.GetChildren()...)
@@ -272,8 +268,8 @@ func (dag *BayesianNetwork) indexNetwork() {
 			if node.Id() != 0 {
 				continue
 			}
-			node.SetId(id)
-			dag.nodeIndex = append(dag.nodeIndex, node)
+			node.setId(id)
+			bn.nodeIndex = append(bn.nodeIndex, node)
 			id++
 			ch := node.GetChildren()
 			children = append(children, ch...)
@@ -282,66 +278,65 @@ func (dag *BayesianNetwork) indexNetwork() {
 		// swap childnodes for parentNodes
 		roots = children
 	}
-	// dag.nodeCount = id
 }
 
-func (dag *BayesianNetwork) addNode(node BayesianNode) error {
-	// node := NewNode(name, cpt)
-	if _, ok := dag.nodes[node.Name()]; ok == true {
+func (bn *BayesianNetwork) addNode(node *Node) error {
+	if _, ok := bn.nodes[node.Name()]; ok == true {
 		return fmt.Errorf("Duplicate nodeName: %s", node.Name())
 	}
-
-	dag.nodes[node.Name()] = node
-	dag.edges[node.Name()] = make([]string, 0, 5)
+	// add parent to child and visa versa
+	bn.nodes[node.Name()] = node
+	bn.edges[node.Name()] = make([]string, 0, 5)
 
 	return nil
 }
 
-func (dag *BayesianNetwork) GetNode(name string) BayesianNode {
-	return dag.nodes[name]
+// returns the BayesianNode probided a valid name
+func (bn *BayesianNetwork) GetNode(name string) *Node {
+	return bn.nodes[name]
 }
 
-func (dag *BayesianNetwork) addConnections(parentNames []string, childName string) error {
+func (bn *BayesianNetwork) addConnections(parentNames []string, childName string) error {
 
-	child, ok := dag.nodes[childName]
+	child, ok := bn.nodes[childName]
 	if !ok {
 		return fmt.Errorf("Child '%s' does not exist \n", childName)
 	}
 
 	for _, parentName := range parentNames {
-		parent, ok := dag.nodes[parentName]
+		parent, ok := bn.nodes[parentName]
 		if !ok {
 			return fmt.Errorf("Parent '%s' does not exist \n", parentName)
 		}
 		parent.AddChild(child)
 		child.AddParent(parent)
-		for _, v := range dag.edges[parentName] {
+		for _, v := range bn.edges[parentName] {
 			if child.Name() == v {
 				return nil
 			}
 		}
 
-		dag.edges[parent.Name()] = append(dag.edges[parent.Name()],
+		bn.edges[parent.Name()] = append(bn.edges[parent.Name()],
 			child.Name())
 	}
 
 	return nil
 }
 
-func (dag *BayesianNetwork) GetNodes() BayNodes {
-	nodes := make([]BayesianNode, 0, len(dag.nodes))
-
-	for _, v := range dag.nodes {
-		nodes = append(nodes, v)
-	}
-	return nodes
+func (bn *BayesianNetwork) NodeCount() int {
+	return len(bn.nodeIndex)
 }
 
-func (dag *BayesianNetwork) String() string {
+// returns all the nodes in the graph
+func (bn *BayesianNetwork) GetNodes() BayNodes {
+	return bn.nodeIndex
+}
+
+func (bn *BayesianNetwork) String() string {
 	var buffer bytes.Buffer
-	// buffer.WriteString(fmt.Sprintf("nodes: %d\n", dag.nodeCount))
-	buffer.WriteString(fmt.Sprintf("nodeIndex: %d\n", dag.nodeIndex))
-	for k, v := range dag.edges {
+	// buffer.WriteString(fmt.Sprintf("nodes: %d\n", bn.nodeCount))
+	buffer.WriteString(fmt.Sprintf("nodeIndex: %d\n", bn.nodeIndex))
+	for k, v := range bn.edges {
 		buffer.WriteString(fmt.Sprintf("%s -> %v\n", k, v))
 	}
 

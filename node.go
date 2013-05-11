@@ -12,67 +12,166 @@ func init() {
 	rand.Seed(time.Now().UTC().UnixNano())
 }
 
-type BayesianNode interface {
-	TruthValue() string
-	Sample() (string, float64, error)
-	SetSample(string) error
-	Reset()
-	AddChild(BayesianNode)
-	AddParent(BayesianNode) error
-	Name() string
-	NumParents() int
-	NumChildren() int
-	IsSampled() bool
-	GetChildren() BayNodes
-	GetParents() BayNodes
-	GetParentNames() []string
-	String() string
-	Id() int
-	SetId(int)
-	ValidateParents(parents []string) bool
-	TruthProb() float64
-	FalseProb() float64
-	ValidateCPT() error
-	MarkovSample() float64
-	SetTruthValue(string)
+type Node struct {
+	// id of a parent node must be larger than 
+	// id of every one of their childnodes
+	id int
+	// name of the random variable
+	name string
+	// the list of parentNames is in the 
+	// same order as one would use to
+	// lookup in the CPT
+	parentNames []string
+	// References to child and parent nodes
+	childIds  BayNodes
+	parentIds BayNodes
+	// truth assignment "T"/"F"
+	// assignment == "" <=> unsampled
+	assignment string
+	// conditional probability table
+	// takes a string-key consisting of truth
+	// assignments with len(key) == len(parentIds)
+	// such as "TTFF"
+	// indicating that parent 1-2 have
+	// truth assignments "T", and parents
+	// 3-4 have truth assignments "F"
+	// - the value returned in a CPT lookup
+	//   is always the "T" value.
+	cpt map[string]float64
+	// after a node has been sampled
+	// this will contain the 
+	// key generated from the truth assignments 
+	// of the parents
+	// keyCache string
+	// Probability cache from the lookup in the 
+	// CPT given the keyCache
+	// probabilityCache float64
 }
 
-func NewRootNode(name string, dist float64) BayesianNode {
+// Generate a root node.
+// The CPT is initialized with "T"=dist,
+// and the "F" = 1-dist
+func NewRootNode(name string, dist float64) *Node {
 	node := &Node{
 		name:     name,
-		childIds: make([]BayesianNode, 0, 4),
+		childIds: make([]*Node, 0, 4),
 		cpt:      map[string]float64{"T": dist, "F": 1.0 - dist},
 	}
-	return BayesianNode(node)
+	return node
 }
 
-func NewNode(name string, parents []string, dist map[string]float64) BayesianNode {
+// 
+func NewNode(name string, parents []string, dist map[string]float64) *Node {
 	node := &Node{
 		name:        name,
 		parentNames: parents,
-		parentIds:   make([]BayesianNode, 0, 4),
-		childIds:    make([]BayesianNode, 0, 4),
+		parentIds:   make([]*Node, 0, 4),
+		childIds:    make([]*Node, 0, 4),
 		cpt:         dist,
 	}
-	return BayesianNode(node)
+	return node
 }
 
-type Node struct {
-	id          int
-	name        string
-	parentNames []string
-	childIds    BayNodes
-	parentIds   BayNodes
-	sample      string // onle != "" after all parents are sampled
-	prob        float64
-	cpt         map[string]float64 // conditional probability table
-}
-
-func (self *Node) IsSampled() bool {
-	if self.sample == "" {
-		return false
+func (self *Node) computeKey() (string, error) {
+	// rootnode - always return the truth value
+	if self.NumParents() == 0 {
+		// self.keyCache = "T"
+		return "T", nil
 	}
-	return true
+
+	// generate key from parent assignments
+	var buffer bytes.Buffer
+	for _, id := range self.parentIds {
+		av := id.AssignmentValue()
+		// one of the parents have not been sampled
+		// - error because this should never happen
+		//   if we sort on the index
+		if av == "" {
+			return "", fmt.Errorf("%s: unset assignment value", id.Name())
+		}
+		buffer.WriteString(av)
+	}
+	// update cache
+	// self.keyCache = buffer.String()
+	return buffer.String(), nil
+}
+
+// Generate the CPT lookup-key from parent assignment variables
+// - if this has already been generated, returned cached value
+func (self *Node) GetCPTProbability() (float64, error) {
+	// cache key (can be very expensive to generate)
+	// if self.keyCache == "" {
+	// 	if err := self.computeKey(); err != nil {
+	// 		return 0.0, err
+	// 	}
+	// }
+	key, err := self.computeKey()
+	if err != nil {
+		return 0.0, err
+	}
+
+	if prob, ok := self.cpt[key]; ok == true {
+		return prob, nil
+	}
+
+	return 0.0, fmt.Errorf("'%s' not a valid node key for CPT: %v", key, self.cpt)
+}
+
+// Sample returns the assignment T/F and the probability
+// of the node given the parent nodes
+// - can return an error if the assignments of the parents
+//   are invalid keys in the CPT
+// - if the assignemnt of a node without a sampling 
+//   as in the markov blanket =>
+//   self.probabilityCache == 0.0 because it hasn't
+//   been sampled.
+func (self *Node) Sample() (string, float64, error) {
+	// if sample has already been calculated
+	// the values will have been cached
+	cptProb, err := self.GetCPTProbability()
+	if err != nil {
+		return "", 0.0, err
+	}
+
+	// if node hasn't been defined, we generate 
+	// an assignment for the node
+	if self.assignment == "" {
+		// generate random float64 for sampling
+		random := rand.Float64()
+		if random > cptProb {
+			self.assignment = "F"
+			return self.assignment, 1 - cptProb, nil
+		}
+
+		self.assignment = "T"
+		return self.assignment, cptProb, nil
+	}
+	// if assignment has already been defined
+	// we might be in a markov blanket
+	if self.assignment == "F" {
+		return self.assignment, 1 - cptProb, nil
+	}
+
+	return self.assignment, cptProb, nil
+}
+
+// Provided that the nodes parents have been sampled =>
+// have truth assignment \in {T/F}
+// returns the probability of either the true or false assignment
+func (self *Node) SampleWithAssignment(assignment string) (float64, error) {
+
+	if assignment != "F" && assignment != "T" {
+		panic(fmt.Sprintf("SampleWithAssignment: invalid assignment: '%s'", assignment))
+	}
+
+	self.assignment = assignment
+
+	_, prob, err := self.Sample()
+	if err != nil {
+		return 0.0, err
+	}
+
+	return prob, nil
 }
 
 func (self *Node) NumParents() int {
@@ -99,7 +198,7 @@ func (self *Node) Id() int {
 	return self.id
 }
 
-func (self *Node) SetId(i int) {
+func (self *Node) setId(i int) {
 	self.id = i
 }
 
@@ -112,55 +211,7 @@ func (self *Node) GetParentNames() []string {
 	return self.parentNames
 }
 
-func (self *Node) TruthProb() float64 {
-	if len(self.parentIds) == 0 {
-		return self.cpt["T"]
-	}
-
-	key := truthKey(len(self.parentIds))
-
-	val, ok := self.cpt[key]
-	if !ok {
-		return 0.0
-	}
-
-	return val
-}
-
-func (self *Node) FalseProb() float64 {
-	if len(self.parentIds) == 0 {
-		return 1 - self.cpt["T"]
-	}
-
-	key := falseKey(len(self.parentIds))
-
-	val, ok := self.cpt[key]
-	if !ok {
-		return 0.0
-	}
-
-	return 1 - val
-}
-
-func truthKey(length int) string {
-	var buffer bytes.Buffer
-	for i := 0; i < length; i++ {
-		buffer.WriteString("T")
-	}
-
-	return buffer.String()
-}
-
-func falseKey(length int) string {
-	var buffer bytes.Buffer
-	for i := 0; i < length; i++ {
-		buffer.WriteString("F")
-	}
-
-	return buffer.String()
-}
-
-func (self *Node) AddChild(child BayesianNode) {
+func (self *Node) AddChild(child *Node) {
 
 	for _, c := range self.childIds {
 		if c == child {
@@ -171,7 +222,7 @@ func (self *Node) AddChild(child BayesianNode) {
 	self.childIds = append(self.childIds, child)
 }
 
-func (self *Node) AddParent(parent BayesianNode) error {
+func (self *Node) AddParent(parent *Node) error {
 
 	for _, p := range self.parentIds {
 		if p == parent {
@@ -185,12 +236,13 @@ func (self *Node) AddParent(parent BayesianNode) error {
 
 func (self *Node) String() string {
 
-	if self.sample != "" {
-		return fmt.Sprintf("%s(%d): s='%s' p=%f (%v)\n\tparents:  %v\n\tchildren: %v\n",
-			self.name, self.id, self.sample, self.prob, self.cpt, self.parentIds, self.childIds)
+	if self.assignment != "" {
+		prob, _ := self.GetCPTProbability()
+		return fmt.Sprintf("%d: %s='%s' p=%f (%v)\n\tparents:  %v\n\tchildren: %v\n",
+			self.id, self.name, self.assignment, prob, self.cpt, self.parentIds, self.childIds)
 	}
 
-	return fmt.Sprintf("%s(%d): %v\n\tparents:  %v\n\tchildren: %v\n",
+	return fmt.Sprintf("%s(%d): (%v)\n\tparents:  %v\n\tchildren: %v\n",
 		self.name, self.id, self.cpt, self.parentIds, self.childIds)
 }
 
@@ -207,155 +259,16 @@ func (self *Node) ValidateParents(parents []string) bool {
 	return true
 }
 
+// func (self *Node) ResetKey() {
+// 	self.keyCache = ""
+// }
+
 func (self *Node) Reset() {
-	self.sample = ""
-	self.prob = 0.0
+	self.assignment = ""
 }
 
-func (self *Node) SetSample(value string) error {
-	if value != "T" && value != "F" {
-		return fmt.Errorf("Value '%s' not a valid truth assignment\n", value)
-	}
-	self.sample = value
-
-	return nil
-}
-
-func (self *Node) TruthValue() string {
-	return self.sample
-}
-
-func (self *Node) Sample() (string, float64, error) {
-	// if sample has already been calculated
-	// return cached value
-	if self.sample != "" {
-		return self.sample, self.prob, nil
-	}
-	// rootNode
-	if len(self.parentIds) == 0 {
-		self.prob = rand.Float64()
-		if self.prob > self.cpt["T"] {
-			self.sample = "F"
-		} else {
-			self.sample = "T"
-		}
-
-		return self.sample, self.prob, nil
-	}
-	// Not a rootnode
-
-	// recursively sample parents
-	var buffer bytes.Buffer
-	for _, id := range self.parentIds {
-		s := id.TruthValue()
-
-		// if err != nil {
-		// 	return "", 0.0, err
-		// }
-		// cache parent samples
-		// self.parentSampleCache[i] = s
-		// concat the samples into a key
-		// which is used to store the values
-		buffer.WriteString(s)
-	}
-
-	// Sample probability given conditions
-	// look up the probability in the CPT
-	key := buffer.String()
-	prob, ok := self.cpt[key]
-	if !ok {
-		return "", 0.0, fmt.Errorf("%s not a valid node key", key)
-	}
-
-	// generate random number in [0.0;1.0]
-	// generate seed based on current time
-	self.prob = rand.Float64()
-
-	if self.prob < prob {
-		self.sample = "T"
-	} else {
-		self.sample = "F"
-	}
-	return self.sample, self.prob, nil
-}
-
-func (self *Node) MarkovSample() float64 {
-	// if sample has already been calculated
-	// return cached value
-	var buffer bytes.Buffer
-	if self.sample != "" {
-		// if sample has already been set
-		for _, id := range self.parentIds {
-			s, _, err := id.Sample()
-			if err != nil {
-				return 0.0
-			}
-			// cache parent samples
-			// self.parentSampleCache[i] = s
-			// concat the samples into a key
-			// which is used to store the values
-			buffer.WriteString(s)
-		}
-
-		// Sample probability given conditions
-		// look up the probability in the CPT
-		key := buffer.String()
-		prob, _ := self.cpt[key]
-
-		if self.sample == "T" {
-			return prob
-		}
-
-		return 1 - prob
-
-	}
-	// rootNode
-	if len(self.parentIds) == 0 {
-		self.prob = rand.Float64()
-		if self.prob > self.cpt["T"] {
-			self.sample = "F"
-			return self.FalseProb()
-		} else {
-			self.sample = "T"
-			return self.TruthProb()
-		}
-	}
-	// Not a rootnode
-
-	// recursively sample parents
-	// var buffer bytes.Buffer
-	for _, id := range self.parentIds {
-		s, _, err := id.Sample()
-		if err != nil {
-			return 0.0
-		}
-		// cache parent samples
-		// self.parentSampleCache[i] = s
-		// concat the samples into a key
-		// which is used to store the values
-		buffer.WriteString(s)
-	}
-
-	// Sample probability given conditions
-	// look up the probability in the CPT
-	key1 := buffer.String()
-	prob1, ok := self.cpt[key1]
-	if !ok {
-		return 0.0
-	}
-
-	self.prob = rand.Float64()
-	fmt.Println("%s: updating sample to \n", self.name)
-	if self.prob < prob1 {
-		self.sample = "T"
-		// fmt.Println("T")
-		return prob1
-	} else {
-		self.sample = "F"
-		// fmt.Println("F")
-		return 1 - prob1
-	}
-	return 0.0
+func (self *Node) AssignmentValue() string {
+	return self.assignment
 }
 
 func (self *Node) IsRoot() bool {
@@ -365,15 +278,14 @@ func (self *Node) IsRoot() bool {
 	return false
 }
 
-func (self *Node) SetTruthValue(value string) {
-
-	self.sample = value
-	self.prob = 0.0
-
+func (self *Node) SetAssignmentValue(value string) {
+	self.assignment = value
+	// for _, child := range self.childIds {
+	// 	child.ResetKey()
+	// }
 }
 
 func (self *Node) ValidateCPT() error {
-
 	// root node
 	if self.IsRoot() {
 		if len(self.cpt) != 2 {
@@ -405,7 +317,7 @@ func (self *Node) ValidateCPT() error {
 	return nil
 }
 
-type BayNodes []BayesianNode
+type BayNodes []*Node
 
 func (bn BayNodes) Len() int {
 	fmt.Println(len(bn))
@@ -431,9 +343,9 @@ func (self BayNodes) String() string {
 	buffer.WriteString(" ")
 	for _, node := range self {
 		buffer.WriteString(node.Name())
-		if node.IsSampled() {
+		if node.AssignmentValue() != "" {
 			buffer.WriteString("(")
-			s, _, _ := node.Sample()
+			s := node.AssignmentValue()
 			buffer.WriteString(s)
 			buffer.WriteString(")")
 		}
