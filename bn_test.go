@@ -87,6 +87,9 @@ func TestAncestralSamplingExample(t *testing.T) {
 	}
 	// x4 = <0.9, 0.1>
 	validateInterval(stats, "X4", 0.9, t)
+
+	bn.JointProbability()
+
 }
 
 func (bn *BayesianNetwork) ValidateIndex(t *testing.T) {
@@ -160,55 +163,55 @@ func TestValidateCPTs(t *testing.T) {
 // 	fmt.Println(dag)
 // }
 
-// func TestJointProbabilityCH3P32(t *testing.T) {
+func TestJointProbabilityCH3P32(t *testing.T) {
 
-// 	r1 := NewRootNode("R", 0.8)
-// 	r2 := NewRootNode("S", 0.4)
+	r1 := NewRootNode("R", 0.8)
+	r2 := NewRootNode("S", 0.4)
 
-// 	c1 := NewNode("J", []string{"R"}, map[string]float64{
-// 		"T": 1.0,
-// 		"F": 0.2,
-// 	})
-// 	c2 := NewNode("T", []string{"R", "S"}, map[string]float64{
-// 		"TF": 1.0,
-// 		"TT": 1.0,
-// 		"FT": 0.9,
-// 		"FF": 0.0,
-// 	})
+	c1 := NewNode("J", []string{"R"}, map[string]float64{
+		"T": 1.0,
+		"F": 0.2,
+	})
+	c2 := NewNode("T", []string{"R", "S"}, map[string]float64{
+		"TF": 1.0,
+		"TT": 1.0,
+		"FT": 0.9,
+		"FF": 0.0,
+	})
 
-// 	bn, err := NewBayesianNetwork(r1, r2, c1, c2)
-// 	if err != nil {
-// 		t.Error(err)
-// 	}
+	bn, err := NewBayesianNetwork(r1, r2, c1, c2)
+	if err != nil {
+		t.Error(err)
+	}
 
-// 	fmt.Println(bn)
+	fmt.Println(bn)
 
-// 	fmt.Println(bn.JointProbability())
-// }
+	fmt.Println(bn.JointProbability())
+}
 
-// // use example from slides instead
-// // because that has known probabilities
-// func TestJointProbabilityBasic(t *testing.T) {
+// use example from slides instead
+// because that has known probabilities
+func TestJointProbabilityBasic(t *testing.T) {
 
-// 	dist1 := map[string]float64{
-// 		"T": 2.0 / 3.0,
-// 		"F": 3.0 / 4.0,
-// 	}
+	dist1 := map[string]float64{
+		"T": 2.0 / 3.0,
+		"F": 3.0 / 4.0,
+	}
 
-// 	distRoot := 0.5
+	distRoot := 0.5
 
-// 	p1 := NewRootNode("X1", distRoot)
-// 	c1 := NewNode("X2", []string{"X1"}, dist1)
+	p1 := NewRootNode("X1", distRoot)
+	c1 := NewNode("X2", []string{"X1"}, dist1)
 
-// 	dag, err := NewBayesianNetwork(p1, c1)
-// 	if err != nil {
-// 		t.Error(err)
-// 		return
-// 	}
-// 	jp, err := dag.JointProbability()
+	dag, err := NewBayesianNetwork(p1, c1)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	jp, err := dag.JointProbability()
 
-// 	fmt.Printf("%f\n", jp)
-// }
+	fmt.Printf("%f\n", jp)
+}
 
 // // func TestAncestralSampling(t *testing.T) {
 // // 	fmt.Printf("All nodes before ancestral sampling:\n%s\n", dag.PrintNetwork())
@@ -258,12 +261,18 @@ func TestMarkovFig8_2(t *testing.T) {
 		t.Error(err)
 	}
 
+	// nomap := map[string]string{}
+
 	mapping := map[string]string{
 		"X1": "T",
 		"X3": "T",
 		"X4": "T",
 		"X7": "F",
 	}
+
+	jp, _ := dag.JointProbability()
+	fmt.Printf("jointProbability: %4f", jp)
+
 	mp, err := dag.MarkovBlanketSampling("X5", mapping, 10000)
 	if err != nil {
 		t.Error(err)

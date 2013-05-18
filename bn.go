@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	// "math"
+	"math/rand"
 	"sort"
-	// "math/rand"
 	// "time"
 )
 
@@ -55,7 +55,9 @@ func NewBayesianNetwork(nodes ...*Node) (*BayesianNetwork, error) {
 // takes the node argument of interest (X5) and the truth-value
 // mapping for the surrounding markov blanket
 // it returns the map containing the frequencies of each of the inferred values:
-func (bn *BayesianNetwork) MarkovBlanketSampling(nodeName string, mapping map[string]string, n int) (map[float64]float64, error) {
+
+// if X5 sample == false: 
+func (bn *BayesianNetwork) MarkovBlanketSampling(nodeName string, mapping map[string]string, n int) ([]float64, error) {
 
 	node := bn.GetNode(nodeName)
 	if node == nil {
@@ -69,15 +71,41 @@ func (bn *BayesianNetwork) MarkovBlanketSampling(nodeName string, mapping map[st
 	bn.UpdateGraphValues(mapping)
 
 	if node.AssignmentValue() != "" {
-		return nil, fmt.Errorf("target node '%s' cannot be defined in the mapping", node.Name())
+		return nil, fmt.Errorf("target node '%s' must not be defined in the mapping %v", node.Name(), mapping)
 	}
 
-	results := map[float64]float64{}
+	nodestat := NewNodeStat(node)
 
+	// for i := 0; i < n; i++ {
+
+	// ******** normalization *******
+	normalization := 0.0
+	// set the value of node of interest to each value
+	for _, assign := range []string{"T", "F"} {
+		// assign truth value
+		node.SetAssignmentValue(assign)
+		// sample the probability given the assignment
+		_, nodeProb, err := node.Sample()
+		if err != nil {
+			return nil, err
+		}
+		// now sample the children given the sampled node of interest
+		for _, childNode := range node.GetChildren() {
+			_, prob, err := childNode.Sample()
+			if err != nil {
+				return nil, err
+			}
+			nodeProb *= prob
+
+			fmt.Printf("Sampling from %s=%s: p=%.2f\n", childNode.Name(), childNode.AssignmentValue(), prob)
+		}
+		normalization += nodeProb
+	}
+
+	// ******* numerator *******
+	// reset node of interest
 	for i := 0; i < n; i++ {
 
-		// ******* numerator *******
-		// reset node of interest
 		node.SetAssignmentValue("")
 		// sample and set node of interest
 		_, numerator, err := node.Sample()
@@ -93,36 +121,22 @@ func (bn *BayesianNetwork) MarkovBlanketSampling(nodeName string, mapping map[st
 			numerator *= prob
 		}
 
-		// ******** denominator *******
-		denominator := 0.0
-		for _, assign := range []string{"T", "F"} {
-			// set the value of node of interest to each value
-			node.SetAssignmentValue(assign)
-			_, prob, err := node.Sample()
-			if err != nil {
-				return nil, err
-			}
-			// now sample the children given the sampled node of interest
-			for _, childNode := range node.GetChildren() {
-				_, prob, err := childNode.Sample()
-				if err != nil {
-					return nil, err
-				}
-				prob *= prob
-			}
-			denominator += prob
+		// fmt.Printf("%.4f / %.4f = %.4f\n", numerator, normalization, numerator/normalization)
+
+		markovProb := numerator / normalization
+
+		random := rand.Float64()
+		assignment := ""
+		if random > markovProb {
+			assignment = "F"
+		} else {
+			assignment = "T"
 		}
 
-		stat := numerator / denominator
+		nodestat.Update(assignment)
 
-		results[stat] += 1.0
 	}
-
-	for key, val := range results {
-		results[key] = val / float64(n)
-	}
-
-	return results, nil
+	return nodestat.GetStats(), nil
 }
 
 // Given a truth-assignment for a markov blanket,
@@ -284,6 +298,7 @@ func (bn *BayesianNetwork) addNode(node *Node) error {
 	if _, ok := bn.nodes[node.Name()]; ok == true {
 		return fmt.Errorf("Duplicate nodeName: %s", node.Name())
 	}
+	
 	// add parent to child and visa versa
 	bn.nodes[node.Name()] = node
 	bn.edges[node.Name()] = make([]string, 0, 5)

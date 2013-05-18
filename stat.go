@@ -1,8 +1,9 @@
 package BayesianNetwork
 
 import (
-// "math"
-// "testing"
+	// "math"
+	// "testing"
+	"fmt"
 )
 
 type NetworkStat struct {
@@ -42,4 +43,40 @@ func (stat *NetworkStat) GetStats() StatMap {
 		}
 	}
 	return stats
+}
+
+type NodeStat struct {
+	node         *Node
+	count, total int
+}
+
+func NewNodeStat(node *Node) *NodeStat {
+	return &NodeStat{
+		node:  node,
+		count: 0,
+		total: 0,
+	}
+}
+
+func (ns *NodeStat) Update(assignment string) {
+	ns.total += 1
+	if assignment == "F" {
+		return
+	}
+
+	ns.count += 1
+}
+
+func (ns *NodeStat) GetStats() []float64 {
+	return []float64{
+		float64(ns.count) / float64(ns.total),
+		float64(ns.total-ns.count) / float64(ns.total),
+	}
+}
+
+func (ns *NodeStat) String() string {
+	return fmt.Sprintf("%s: T: %.3f F: %.3f",
+		ns.node.Name(),
+		float64(ns.count)/float64(ns.total),
+		float64(ns.total-ns.count)/float64(ns.total))
 }
