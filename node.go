@@ -129,6 +129,7 @@ func (self *Node) Sample() (string, float64, error) {
 	// if sample has already been calculated
 	// the values will have been cached
 	cptProb, err := self.GetCPTProbability()
+	// fmt.Printf("ProbSample: %f\n", cptProb)
 	if err != nil {
 		return "", 0.0, err
 	}
@@ -140,7 +141,7 @@ func (self *Node) Sample() (string, float64, error) {
 		random := rand.Float64()
 		if random > cptProb {
 			self.assignment = "F"
-			return self.assignment, 1 - cptProb, nil
+			return self.assignment, cptProb, nil
 		}
 
 		self.assignment = "T"
@@ -149,10 +150,21 @@ func (self *Node) Sample() (string, float64, error) {
 	// if assignment has already been defined
 	// we might be in a markov blanket
 	if self.assignment == "F" {
-		return self.assignment, 1 - cptProb, nil
+		return self.assignment, cptProb, nil
 	}
 
 	return self.assignment, cptProb, nil
+}
+
+func (self *Node) P() (float64, error) {
+
+	cptProb, err := self.GetCPTProbability()
+	if err != nil {
+		return 0.0, err
+	}
+
+	return cptProb, err
+
 }
 
 // Provided that the nodes parents have been sampled =>
@@ -232,6 +244,16 @@ func (self *Node) AddParent(parent *Node) error {
 	self.parentIds = append(self.parentIds, parent)
 
 	return nil
+}
+
+func (self *Node) AssignmentString() string {
+	if self.assignment != "" {
+		return fmt.Sprintf("%s='%s'",
+			self.name, self.assignment)
+	}
+
+	return fmt.Sprintf("%s='%s'",
+		self.name, self.assignment)
 }
 
 func (self *Node) String() string {

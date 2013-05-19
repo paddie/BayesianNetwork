@@ -57,86 +57,126 @@ func NewBayesianNetwork(nodes ...*Node) (*BayesianNetwork, error) {
 // it returns the map containing the frequencies of each of the inferred values:
 
 // if X5 sample == false: 
-func (bn *BayesianNetwork) MarkovBlanketSampling(nodeName string, mapping map[string]string, n int) ([]float64, error) {
+
+func (bn *BayesianNetwork) GibbsSampling(nodeName string, observations map[string]string, n int) (StatMap, error) {
 
 	node := bn.GetNode(nodeName)
 	if node == nil {
 		return nil, fmt.Errorf("Invalid nodeName: %s", nodeName)
 	}
-	// make sure graph is reset
+
+	nodes_of_interest := make(BayNodes, 0, len(bn.nodeIndex)-len(observations))
+
+	// just to be sure
 	bn.Reset()
+	// make sure no node is not assigned
+	// either using the mapping or using a default F
+	if len(observations) == 0 {
+		// no observations
+		bn.ResetWithAssignment("F")
+	} else {
+		// update the graph with all the observed values
+		// from the mapping
+		bn.UpdateGraphValues(observations)
 
-	// update the graph with all the observed values
-	// from the mapping
-	bn.UpdateGraphValues(mapping)
+		fmt.Println(bn)
+		// validate that all nodes have initial assignment values
+		for _, node := range bn.nodeIndex {
+			if node.AssignmentValue() == "" {
+				// return nil, fmt.Errorf("node '%s' was not defined in mapping %v", node.Name(), mapping)
+				node.SetAssignmentValue("F")
+				nodes_of_interest = append(nodes_of_interest, node)
+			}
+		}
+		fmt.Println(bn)
+	}
+	// initialize stat gathering
+	networkstat := NewStat(bn)
 
-	if node.AssignmentValue() != "" {
-		return nil, fmt.Errorf("target node '%s' must not be defined in the mapping %v", node.Name(), mapping)
+	for i := 0; i < n; i++ {
+		for _, xi := range nodes_of_interest {
+			err := bn.MarkovBlanketSample(xi)
+			if err != nil {
+				return nil, err
+			}
+		}
+		// gather stats
+		networkstat.Update()
+		fmt.Printf("bn: %v", bn)
 	}
 
-	nodestat := NewNodeStat(node)
+	return networkstat.GetStats(), nil
+}
 
-	// for i := 0; i < n; i++ {
+func (bn *BayesianNetwork) MarkovBlanketSample(node *Node) error {
 
-	// ******** normalization *******
+	// ******* numerator *******
+
+	// reset node of interest
+	node.SetAssignmentValue("")
+	// sample and set node of interest
+	_, numerator, err := node.Sample()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("%s = %s (p=%.2f)\n", node.Name(), node.AssignmentValue(), numerator)
+
+	// now sample the children given the sampled node of interest
+	for _, childNode := range node.GetChildren() {
+		_, prob, err := childNode.Sample()
+		if err != nil {
+			return err
+		}
+		numerator *= prob
+	}
+
+	fmt.Printf("%s = %s\n", node.Name(), node.AssignmentValue())
+
+	// ******* normalization *******
+
 	normalization := 0.0
 	// set the value of node of interest to each value
 	for _, assign := range []string{"T", "F"} {
 		// assign truth value
 		node.SetAssignmentValue(assign)
 		// sample the probability given the assignment
-		_, nodeProb, err := node.Sample()
+		nodeProb, err := node.P()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		// now sample the children given the sampled node of interest
 		for _, childNode := range node.GetChildren() {
-			_, prob, err := childNode.Sample()
+			prob, err := childNode.P()
+			// fmt.Println(prob)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			nodeProb *= prob
-
-			fmt.Printf("Sampling from %s=%s: p=%.2f\n", childNode.Name(), childNode.AssignmentValue(), prob)
 		}
+
+		fmt.Printf("nodeProb= %.2f\n", nodeProb)
+
 		normalization += nodeProb
 	}
+	// fmt.Printf("\tnorm: %.2f\n", normalization)
 
-	// ******* numerator *******
-	// reset node of interest
-	for i := 0; i < n; i++ {
+	markovProb := numerator / normalization
 
-		node.SetAssignmentValue("")
-		// sample and set node of interest
-		_, numerator, err := node.Sample()
-		if err != nil {
-			return nil, err
-		}
-		// now sample the children given the sampled node of interest
-		for _, childNode := range node.GetChildren() {
-			_, prob, err := childNode.Sample()
-			if err != nil {
-				return nil, err
-			}
-			numerator *= prob
-		}
+	fmt.Printf("\t%.2f / %.2f = %.2f\n", numerator, normalization, markovProb)
 
-		// fmt.Printf("%.4f / %.4f = %.4f\n", numerator, normalization, numerator/normalization)
+	// fmt.Printf("\tprob: %.2f\n", markovProb)
 
-		markovProb := numerator / normalization
-
-		random := rand.Float64()
-		assignment := ""
-		if random > markovProb {
-			assignment = "F"
-		} else {
-			assignment = "T"
-		}
-
-		nodestat.Update(assignment)
-
+	random := rand.Float64()
+	if random > markovProb {
+		node.SetAssignmentValue("F")
+	} else {
+		node.SetAssignmentValue("T")
 	}
-	return nodestat.GetStats(), nil
+
+	fmt.Printf("%s => %s\n", node.Name(), node.assignment)
+	return nil
+
 }
 
 // Given a truth-assignment for a markov blanket,
@@ -212,6 +252,19 @@ func (bn *BayesianNetwork) Reset() {
 	for _, node := range bn.nodeIndex {
 		node.Reset()
 	}
+}
+
+func (bn *BayesianNetwork) ResetWithAssignment(assignment string) error {
+
+	if assignment != "F" && assignment != "T" {
+		return fmt.Errorf("Invalid assignment: '%s' should be T or F", assignment)
+	}
+
+	for _, node := range bn.nodeIndex {
+		node.SetAssignmentValue(assignment)
+	}
+
+	return nil
 }
 
 // prints every node in the system seperately
@@ -298,7 +351,7 @@ func (bn *BayesianNetwork) addNode(node *Node) error {
 	if _, ok := bn.nodes[node.Name()]; ok == true {
 		return fmt.Errorf("Duplicate nodeName: %s", node.Name())
 	}
-	
+
 	// add parent to child and visa versa
 	bn.nodes[node.Name()] = node
 	bn.edges[node.Name()] = make([]string, 0, 5)
@@ -350,10 +403,12 @@ func (bn *BayesianNetwork) GetNodes() BayNodes {
 func (bn *BayesianNetwork) String() string {
 	var buffer bytes.Buffer
 	// buffer.WriteString(fmt.Sprintf("nodes: %d\n", bn.nodeCount))
-	buffer.WriteString(fmt.Sprintf("nodeIndex: %d\n", bn.nodeIndex))
-	for k, v := range bn.edges {
-		buffer.WriteString(fmt.Sprintf("%s -> %v\n", k, v))
+	// buffer.WriteString(fmt.Sprintf("nodeIndex: %d\n", bn.nodeIndex))
+	for _, node := range bn.nodeIndex {
+		buffer.WriteString(fmt.Sprintf("%s ", node.AssignmentString()))
 	}
+
+	buffer.WriteString("\n")
 
 	return buffer.String()
 }
