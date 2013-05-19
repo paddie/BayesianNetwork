@@ -21,7 +21,7 @@ type BayesianNetwork struct {
 }
 
 // Creates a directed bayesian network from each node
-func NewBayesianNetwork(nodes ...*Node) (*BayesianNetwork, error) {
+func NewBayesianNetwork(nodes ...*Node) *BayesianNetwork {
 	bn := &BayesianNetwork{
 		nodes:     make(map[string]*Node, len(nodes)),
 		nodeIndex: make([]*Node, 0, len(nodes)),
@@ -31,7 +31,7 @@ func NewBayesianNetwork(nodes ...*Node) (*BayesianNetwork, error) {
 	// add nodes to network
 	for _, node := range nodes {
 		if err := bn.addNode(node); err != nil {
-			return nil, err
+			panic(err)
 		}
 	}
 
@@ -43,13 +43,13 @@ func NewBayesianNetwork(nodes ...*Node) (*BayesianNetwork, error) {
 	// validate that CPT has the correct dimensions
 	// wrt. number of parents 
 	if err := bn.validateCPTs(); err != nil {
-		return nil, err
+		panic(err)
 	}
 
 	// index nodes in a breath first fashion
 	bn.indexNetwork()
 
-	return bn, nil
+	return bn
 }
 
 // takes the node argument of interest (X5) and the truth-value
@@ -58,13 +58,10 @@ func NewBayesianNetwork(nodes ...*Node) (*BayesianNetwork, error) {
 
 // if X5 sample == false: 
 
-func (bn *BayesianNetwork) GibbsSampling(observations map[string]string, n, m int) (StatMap, error) {
+func (bn *BayesianNetwork) GibbsSampling(observations map[string]string, n, m int) StatMap {
 
-	// node := bn.GetNode(nodeName)
-	// if node == nil {
-	// 	return nil, fmt.Errorf("Invalid nodeName: %s", nodeName)
-	// }
-
+	// only sample from the variables that 
+	// are not defined
 	nodes_of_interest := make(BayNodes, 0, len(bn.nodeIndex)-len(observations))
 
 	// just to be sure
@@ -72,148 +69,110 @@ func (bn *BayesianNetwork) GibbsSampling(observations map[string]string, n, m in
 	// make sure no node is not assigned
 	// either using the mapping or using a default F
 	if len(observations) == 0 {
-		// no observations
-
+		// no observations => sample from entire network
 		nodes_of_interest = bn.nodeIndex[0:len(bn.nodeIndex)]
-		fmt.Println(nodes_of_interest)
-
+		// reset entire graph to false
 		bn.ResetWithAssignment("F")
 	} else {
 		// update the graph with all the observed values
-		// from the mapping
 		bn.UpdateGraphValues(observations)
 
-		fmt.Println(bn)
-		// validate that all nodes have initial assignment values
+		// gather all the nodes of interest
+		// and initialize them
 		for _, node := range bn.nodeIndex {
 			if node.AssignmentValue() == "" {
-				// return nil, fmt.Errorf("node '%s' was not defined in mapping %v", node.Name(), mapping)
 				node.SetAssignmentValue("F")
 				nodes_of_interest = append(nodes_of_interest, node)
 			}
 		}
-		fmt.Println(bn)
 	}
+
 	// initialize stat gathering
 	networkstat := NewStat(bn)
+	// shouldn't matter, but why not
 	sort.Sort(nodes_of_interest)
 
+	// run n times before we start registering statistics
 	for i := 0; i < n; i++ {
 		for _, xi := range nodes_of_interest {
-			err := bn.MarkovBlanketSample(xi)
-			if err != nil {
-				return nil, err
-			}
+			sample := bn.MarkovBlanketSample(xi)
+			xi.SetAssignmentValue(sample)
 		}
 	}
 
+	// run m times while gathering stats
 	for i := 0; i < m; i++ {
 		for _, xi := range nodes_of_interest {
-			err := bn.MarkovBlanketSample(xi)
-			if err != nil {
-				return nil, err
-			}
-
-			// fmt.Printf("bn: %v", bn)
+			sample := bn.MarkovBlanketSample(xi)
+			xi.SetAssignmentValue(sample)
 		}
-		// fmt.Println("\n----------------\n")
+		// update stats
 		networkstat.Update()
-		// gather stats
 	}
 
-	return networkstat.GetStats(), nil
+	return networkstat.GetStats()
 }
 
-func (bn *BayesianNetwork) MarkovBlanketSample(node *Node) error {
+func (bn *BayesianNetwork) MarkovBlanketSample(node *Node) string {
 	// ******* numerator *******
-	// sample and set node of interest
-
-	numerator, err := node.P()
-	if err != nil {
-		return err
-	}
-
-	// fmt.Printf("%s = %s (p=%.2f)\n", node.Name(), node.AssignmentValue(), numerator)
-
+	numerator := node.P()
 	// now sample the children given the sampled node of interest
 	for _, childNode := range node.GetChildren() {
-		numProb, err := childNode.P()
-		if err != nil {
-			// fmt.Println("\n\nFUCK!\n\n")
-			return err
-		}
-		// fmt.Printf("\t%s: p = %.2f\n", childNode.Name(), numProb)
-		numerator *= numProb
+		numerator *= childNode.P()
 	}
 
-	// fmt.Printf("numerator = %.2f\n", numerator)
-
 	// ******* normalization *******
-
 	normalization := 0.0
 	// main, err := node.P()
 	// set the value of node of interest to each value
-	for _, assign := range []string{"T", "F"} {
+	for _, cond := range []string{"T", "F"} {
 		// assign truth value
-		node.SetAssignmentValue(assign)
+		node.SetAssignmentValue(cond)
 		// // sample the probability given the assignment
-		sampleProb := node.SampleOnCondition(assign)
+		sampleProb := node.SampleOnCondition(cond)
 
 		// now sample the children given the sampled node of interest
-		// nodeProb := 1.0
 		for _, childNode := range node.GetChildren() {
-			prob, err := childNode.P()
-			if err != nil {
-				return err
-			}
-			sampleProb *= prob
+			sampleProb *= childNode.P()
 		}
-
-		// fmt.Printf("nodeProb == %.2f\n", nodeProb)
 
 		normalization += sampleProb
 	}
-
 	markovProb := numerator / normalization
 
-	// // fmt.Printf("\t%.2f / %.2f = %.2f\n", numerator, normalization, markovProb)
 	random := rand.Float64()
 	if random > markovProb {
-		node.SetAssignmentValue("F")
-	} else {
-		node.SetAssignmentValue("T")
+		// node.SetAssignmentValue("F")
+		return "F"
 	}
 
-	// fmt.Printf("%s => %s\n", node.Name(), node.AssignmentValue())
-	return nil
+	// node.SetAssignmentValue("T")
+	return "T"
+
 }
 
 // Given a truth-assignment for a markov blanket,
 // this method updates the nodes to reflect those values.
 // mapping example: map[string]string{ "X1":"F", X3:"T"}
 // - reports an error if just one of the nodes does not exist
-func (bn *BayesianNetwork) UpdateGraphValues(mapping map[string]string) error {
+func (bn *BayesianNetwork) UpdateGraphValues(mapping map[string]string) {
 
 	for nodeName, value := range mapping {
 		node := bn.nodes[nodeName]
 		if node == nil {
-			return fmt.Errorf("Node '%s' does not exist\n", nodeName)
+			panic(fmt.Errorf("Node '%s' does not exist\n", nodeName))
 		}
 		node.SetAssignmentValue(value)
 	}
-
-	return nil
 }
 
 // does a complete ancestral sampling of the network
-func (bn *BayesianNetwork) AncestralSampling(mapping map[string]string, n int) (map[string][]float64, error) {
+func (bn *BayesianNetwork) AncestralSampling(mapping map[string]string, n int) map[string][]float64 {
 	// reset graph before running
 	bn.Reset()
 	// update graph from mapping
-	err := bn.UpdateGraphValues(mapping)
-	if err != nil {
-		return nil, err
-	}
+	bn.UpdateGraphValues(mapping)
+
 	// backup the state so we can reset it afterwards
 	backup := make([]string, len(bn.nodeIndex))
 	for i, node := range bn.nodeIndex {
@@ -225,7 +184,7 @@ func (bn *BayesianNetwork) AncestralSampling(mapping map[string]string, n int) (
 	for i := 0; i < n; i++ {
 
 		for _, node := range bn.nodeIndex {
-			node.Sample()
+			node.SetAssignmentValue(node.Sample())
 		}
 		// update stats
 		stat.Update()
@@ -236,7 +195,7 @@ func (bn *BayesianNetwork) AncestralSampling(mapping map[string]string, n int) (
 	}
 	// cleanup
 	bn.Reset()
-	return stat.GetStats(), nil
+	return stat.GetStats()
 }
 
 func (bn *BayesianNetwork) GatherNodes(nodeNames []string) (BayNodes, error) {
@@ -263,17 +222,15 @@ func (bn *BayesianNetwork) Reset() {
 	}
 }
 
-func (bn *BayesianNetwork) ResetWithAssignment(assignment string) error {
+func (bn *BayesianNetwork) ResetWithAssignment(assignment string) {
 
 	if assignment != "F" && assignment != "T" {
-		return fmt.Errorf("Invalid assignment: '%s' should be T or F", assignment)
+		panic(fmt.Sprintf("Invalid assignment: '%s' should be T or F", assignment))
 	}
 
 	for _, node := range bn.nodeIndex {
 		node.SetAssignmentValue(assignment)
 	}
-
-	return nil
 }
 
 // prints every node in the system seperately
@@ -296,19 +253,12 @@ func (bn *BayesianNetwork) PrintNetwork() string {
 }
 
 // joint probability of the network
-func (bn *BayesianNetwork) JointProbability() (float64, error) {
-
-	bn.Reset()
-
+func (bn *BayesianNetwork) JointProbability() float64 {
 	p := 1.0
 	for _, node := range bn.nodeIndex {
-		prob, err := node.SampleWithAssignment("T")
-		if err != nil {
-			return 0.0, err
-		}
-		p *= prob
+		p *= node.P()
 	}
-	return p, nil
+	return p
 }
 
 // validate every node in the system for invalid 

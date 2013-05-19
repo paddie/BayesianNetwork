@@ -228,7 +228,7 @@ func TestMarkovFig8_2(t *testing.T) {
 
 	dist1 := map[string]float64{
 		"T": 0.1,
-		"F": 0.1,
+		"F": 0.7,
 	}
 
 	dist2 := map[string]float64{
@@ -260,35 +260,28 @@ func TestMarkovFig8_2(t *testing.T) {
 	c4 := NewNode("X7", []string{"X4", "X5"}, dist2)
 
 	// construct the network
-	dag, err := NewBayesianNetwork(p1, p2, p3, c1, c2, c3, c4)
-	if err != nil {
-		t.Error(err)
-	}
-
-	// nomap := map[string]string{}
+	dag := NewBayesianNetwork(p1, p2, p3, c1, c2, c3, c4)
 
 	observations := map[string]string{
 		"X1": "T",
 		"X2": "F",
 		"X3": "F",
-		// "X4": "F",
-		// "X6": "F",
+		"X4": "F",
+		"X6": "F",
 		// // "X5": "T",
-		// "X7": "F",
+		"X7": "F",
 	}
 
-	// jp, _ := dag.JointProbability()
-	// fmt.Printf("jointProbability: %4f", jp)
-
-	mp, err := dag.GibbsSampling(observations, 10, 10000)
-	if err != nil {
-		t.Error(err)
-	}
+	mp := dag.GibbsSampling(observations, 10000, 10000)
 
 	fmt.Printf("markovSampling: %v\n", mp)
 }
 
 func TestGibbSampling(t *testing.T) {
+
+	// seed with value for repeatable results
+	rand.Seed(42)
+
 	// ****** bn 1 ********
 	e := NewRootNode("E", 0.3)
 	i := NewRootNode("I", 0.7)
@@ -344,15 +337,9 @@ func TestGibbSampling(t *testing.T) {
 
 	u := NewNode("U", []string{"P", "R"}, uDist)
 
-	// var err error
-	bn, err := NewBayesianNetwork(e, i, d, p, r, j, u)
-	if err != nil {
-		panic(err)
-	}
-	mp, err := bn.GibbsSampling(observations, 10000, 10000)
-	if err != nil {
-		t.Error(err)
-	}
+	bn := NewBayesianNetwork(e, i, d, p, r, j, u)
+
+	mp := bn.GibbsSampling(observations, 10000, 10000)
 
 	fmt.Printf("markovSampling: %v\n", mp)
 

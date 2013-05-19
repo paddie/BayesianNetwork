@@ -72,11 +72,13 @@ func NewNode(name string, parents []string, dist map[string]float64) *Node {
 	return node
 }
 
-func (self *Node) computeKey() (string, error) {
-	// rootnode - always return the truth value
+// Generate the key to lookup in the CPT with 
+// based on the assignments of the parent nodes
+func (self *Node) computeKey() string {
+	// rootnode - always return the truth key
 	if self.NumParents() == 0 {
 		// self.keyCache = "T"
-		return "T", nil
+		return "T"
 	}
 
 	// generate key from parent assignments
@@ -87,36 +89,30 @@ func (self *Node) computeKey() (string, error) {
 		// - error because this should never happen
 		//   if we sort on the index
 		if av == "" {
-			return "", fmt.Errorf("%s: unset assignment value", id.Name())
+			panic(fmt.Sprintf("%s does not have an assignment", id.Name()))
 		}
 		buffer.WriteString(av)
 	}
 	// update cache
 	// self.keyCache = buffer.String()
-	return buffer.String(), nil
+	return buffer.String()
 }
 
 // Generate the CPT lookup-key from parent assignment variables
 // - if this has already been generated, returned cached value
-func (self *Node) GetCPTProbability() (float64, error) {
-	key, err := self.computeKey()
-	if err != nil {
-		return 0.0, err
-	}
+func (self *Node) CPT() float64 {
+	key := self.computeKey()
 
 	if prob, ok := self.cpt[key]; ok == true {
-		return prob, nil
+		return prob
 	}
 
-	return 0.0, fmt.Errorf("'%s' not a valid node key for CPT: %v", key, self.cpt)
+	panic(fmt.Sprintf("Invalid CPT key: %s", key))
 }
 
 func (self *Node) SampleOnCondition(assignment string) float64 {
 
-	prob, err := self.GetCPTProbability()
-	if err != nil {
-		panic(err)
-	}
+	prob := self.CPT()
 
 	if assignment == "F" {
 		return 1 - prob
@@ -133,65 +129,23 @@ func (self *Node) SampleOnCondition(assignment string) float64 {
 //   as in the markov blanket =>
 //   self.probabilityCache == 0.0 because it hasn't
 //   been sampled.
-func (self *Node) Sample() (string, float64, error) {
+func (self *Node) Sample() string {
 	// if sample has already been calculated
 	// the values will have been cached
-	cptProb, err := self.GetCPTProbability()
-	// fmt.Printf("ProbSample: %f\n", cptProb)
-	if err != nil {
-		return "", 0.0, err
+	cptProb := self.CPT()
+
+	// generate random float64 for sampling
+	random := rand.Float64()
+
+	if random > cptProb {
+		return "F"
 	}
 
-	// if node hasn't been defined, we generate 
-	// an assignment for the node
-	if self.assignment == "" {
-		// generate random float64 for sampling
-		random := rand.Float64()
-		if random > cptProb {
-			self.assignment = "F"
-			return self.assignment, cptProb, nil
-		}
-
-		self.assignment = "T"
-		return self.assignment, cptProb, nil
-	}
-	// if assignment has already been defined
-	// we might be in a markov blanket
-	if self.assignment == "F" {
-		return self.assignment, cptProb, nil
-	}
-
-	return self.assignment, cptProb, nil
+	return "T"
 }
 
-func (self *Node) P() (float64, error) {
-
-	cptProb, err := self.GetCPTProbability()
-	if err != nil {
-		return 0.0, err
-	}
-
-	return cptProb, err
-
-}
-
-// Provided that the nodes parents have been sampled =>
-// have truth assignment \in {T/F}
-// returns the probability of either the true or false assignment
-func (self *Node) SampleWithAssignment(assignment string) (float64, error) {
-
-	if assignment != "F" && assignment != "T" {
-		panic(fmt.Sprintf("SampleWithAssignment: invalid assignment: '%s'", assignment))
-	}
-
-	self.assignment = assignment
-
-	_, prob, err := self.Sample()
-	if err != nil {
-		return 0.0, err
-	}
-
-	return prob, nil
+func (self *Node) P() float64 {
+	return self.CPT()
 }
 
 func (self *Node) NumParents() int {
@@ -267,7 +221,7 @@ func (self *Node) AssignmentString() string {
 func (self *Node) String() string {
 
 	if self.assignment != "" {
-		prob, _ := self.GetCPTProbability()
+		prob := self.CPT()
 		return fmt.Sprintf("%d: %s='%s' p=%f (%v)\n\tparents:  %v\n\tchildren: %v\n",
 			self.id, self.name, self.assignment, prob, self.cpt, self.parentIds, self.childIds)
 	}
@@ -350,7 +304,6 @@ func (self *Node) ValidateCPT() error {
 type BayNodes []*Node
 
 func (bn BayNodes) Len() int {
-	fmt.Println(len(bn))
 	return len(bn)
 }
 
