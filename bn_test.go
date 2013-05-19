@@ -224,29 +224,29 @@ func TestMarkovFig8_2(t *testing.T) {
 
 	rand.Seed(100)
 
-	distRoot := 0.5
+	distRoot := 0.7
 
 	dist1 := map[string]float64{
-		"T": 0.4,
-		"F": 0.6,
+		"T": 0.1,
+		"F": 0.1,
 	}
 
 	dist2 := map[string]float64{
 		"TT": 0.9,
-		"FF": 0.5,
-		"TF": 0.3,
-		"FT": 0.05,
+		"FF": 0.2,
+		"TF": 0.2,
+		"FT": 0.09,
 	}
 
 	dist3 := map[string]float64{
-		"TTT": 0.6,
-		"TFF": 0.4,
-		"TTF": 0.4,
+		"TTT": 0.2,
+		"TFF": 0.3,
+		"TTF": 0.6,
 		"TFT": 0.7,
-		"FTT": 0.5,
-		"FFF": 0.5,
+		"FTT": 0.1,
+		"FFF": 0.8,
 		"FTF": 0.3,
-		"FFT": 0.9,
+		"FFT": 0.6,
 	}
 
 	// network from BISHOP p. 362, Fig. 8.2
@@ -267,20 +267,20 @@ func TestMarkovFig8_2(t *testing.T) {
 
 	// nomap := map[string]string{}
 
-	mapping := map[string]string{
+	observations := map[string]string{
 		"X1": "T",
 		"X2": "F",
-		"X3": "T",
-		"X4": "F",
-		"X6": "F",
-		"X5": "T",
+		"X3": "F",
+		// "X4": "F",
+		// "X6": "F",
+		// // "X5": "T",
 		// "X7": "F",
 	}
 
 	// jp, _ := dag.JointProbability()
 	// fmt.Printf("jointProbability: %4f", jp)
 
-	mp, err := dag.GibbsSampling("X5", mapping, 10000)
+	mp, err := dag.GibbsSampling(observations, 10, 10000)
 	if err != nil {
 		t.Error(err)
 	}
@@ -288,51 +288,72 @@ func TestMarkovFig8_2(t *testing.T) {
 	fmt.Printf("markovSampling: %v\n", mp)
 }
 
-func init() {
-	// // ****** bn 1 ********
-	// e := NewRootNode("E", 0.3)
-	// i := NewRootNode("I", 0.7)
-	// d := NewRootNode("D", 0.2)
+func TestGibbSampling(t *testing.T) {
+	// ****** bn 1 ********
+	e := NewRootNode("E", 0.3)
+	i := NewRootNode("I", 0.7)
+	d := NewRootNode("D", 0.2)
 
-	// pDist := map[string]float64{
-	// 	"TTT": 0.9,
-	// 	"TFF": 0.2,
-	// 	"TTF": 0.5,
-	// 	"TFT": 0.7,
-	// 	"FTT": 0.8,
-	// 	"FFF": 0.07,
-	// 	"FTF": 0.6,
-	// 	"FFT": 0.7,
-	// }
+	pDist := map[string]float64{
+		"TTT": 0.9,
+		"TFF": 0.2,
+		"TTF": 0.5,
+		"TFT": 0.7,
+		"FTT": 0.8,
+		"FFF": 0.07,
+		"FTF": 0.6,
+		"FFT": 0.7,
+	}
 
-	// p := NewNode("P", []string{"E", "I", "D"}, pDist)
+	p := NewNode("P", []string{"E", "I", "D"}, pDist)
 
-	// rDist := map[string]float64{
-	// 	"TT": 0.9,
-	// 	"FF": 0.2,
-	// 	"TF": 0.6,
-	// 	"FT": 0.9,
-	// }
+	rDist := map[string]float64{
+		"TT": 0.9,
+		"FF": 0.2,
+		"TF": 0.6,
+		"FT": 0.9,
+	}
 
-	// r := NewNode("R", []string{"I", "D"}, rDist)
+	r := NewNode("R", []string{"I", "D"}, rDist)
 
-	// jDist := map[string]float64{
-	// 	"T": 0.7,
-	// 	"F": 0.3,
-	// }
-	// j := NewNode("J", []string{"P"}, jDist)
+	jDist := map[string]float64{
+		"T": 0.7,
+		"F": 0.3,
+	}
+	j := NewNode("J", []string{"P"}, jDist)
 
-	// uDist := map[string]float64{
-	// 	"TT": 0.9,
-	// 	"FF": 0.3,
-	// 	"TF": 0.6,
-	// 	"FT": 0.8,
-	// }
-	// u := NewNode("U", []string{"P", "R"}, uDist)
+	uDist := map[string]float64{
+		"TT": 0.9,
+		"FF": 0.3,
+		"TF": 0.6,
+		"FT": 0.8,
+	}
+
+	observations := map[string]string{
+		"J": "T",
+		"E": "T",
+		"I": "F",
+		"D": "F",
+		"R": "F",
+		// "P": "F",
+		"U": "T",
+
+		// "X5": "T",
+		// "X7": "F",
+	}
+
+	u := NewNode("U", []string{"P", "R"}, uDist)
 
 	// var err error
-	// bn, err = NewBayesianNetwork(e, i, d, p, r, j, u)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	bn, err := NewBayesianNetwork(e, i, d, p, r, j, u)
+	if err != nil {
+		panic(err)
+	}
+	mp, err := bn.GibbsSampling(observations, 10000, 10000)
+	if err != nil {
+		t.Error(err)
+	}
+
+	fmt.Printf("markovSampling: %v\n", mp)
+
 }

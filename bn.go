@@ -58,12 +58,12 @@ func NewBayesianNetwork(nodes ...*Node) (*BayesianNetwork, error) {
 
 // if X5 sample == false: 
 
-func (bn *BayesianNetwork) GibbsSampling(nodeName string, observations map[string]string, n int) (StatMap, error) {
+func (bn *BayesianNetwork) GibbsSampling(observations map[string]string, n, m int) (StatMap, error) {
 
-	node := bn.GetNode(nodeName)
-	if node == nil {
-		return nil, fmt.Errorf("Invalid nodeName: %s", nodeName)
-	}
+	// node := bn.GetNode(nodeName)
+	// if node == nil {
+	// 	return nil, fmt.Errorf("Invalid nodeName: %s", nodeName)
+	// }
 
 	nodes_of_interest := make(BayNodes, 0, len(bn.nodeIndex)-len(observations))
 
@@ -73,6 +73,10 @@ func (bn *BayesianNetwork) GibbsSampling(nodeName string, observations map[strin
 	// either using the mapping or using a default F
 	if len(observations) == 0 {
 		// no observations
+
+		nodes_of_interest = bn.nodeIndex[0:len(bn.nodeIndex)]
+		fmt.Println(nodes_of_interest)
+
 		bn.ResetWithAssignment("F")
 	} else {
 		// update the graph with all the observed values
@@ -92,6 +96,7 @@ func (bn *BayesianNetwork) GibbsSampling(nodeName string, observations map[strin
 	}
 	// initialize stat gathering
 	networkstat := NewStat(bn)
+	sort.Sort(nodes_of_interest)
 
 	for i := 0; i < n; i++ {
 		for _, xi := range nodes_of_interest {
@@ -100,73 +105,78 @@ func (bn *BayesianNetwork) GibbsSampling(nodeName string, observations map[strin
 				return nil, err
 			}
 		}
-		// gather stats
+	}
+
+	for i := 0; i < m; i++ {
+		for _, xi := range nodes_of_interest {
+			err := bn.MarkovBlanketSample(xi)
+			if err != nil {
+				return nil, err
+			}
+
+			// fmt.Printf("bn: %v", bn)
+		}
+		// fmt.Println("\n----------------\n")
 		networkstat.Update()
-		fmt.Printf("bn: %v", bn)
+		// gather stats
 	}
 
 	return networkstat.GetStats(), nil
 }
 
 func (bn *BayesianNetwork) MarkovBlanketSample(node *Node) error {
-
 	// ******* numerator *******
-
-	// reset node of interest
-	node.SetAssignmentValue("")
 	// sample and set node of interest
-	_, numerator, err := node.Sample()
+
+	numerator, err := node.P()
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("%s = %s (p=%.2f)\n", node.Name(), node.AssignmentValue(), numerator)
+	// fmt.Printf("%s = %s (p=%.2f)\n", node.Name(), node.AssignmentValue(), numerator)
 
 	// now sample the children given the sampled node of interest
 	for _, childNode := range node.GetChildren() {
-		_, prob, err := childNode.Sample()
+		numProb, err := childNode.P()
 		if err != nil {
+			// fmt.Println("\n\nFUCK!\n\n")
 			return err
 		}
-		numerator *= prob
+		// fmt.Printf("\t%s: p = %.2f\n", childNode.Name(), numProb)
+		numerator *= numProb
 	}
 
-	fmt.Printf("%s = %s\n", node.Name(), node.AssignmentValue())
+	// fmt.Printf("numerator = %.2f\n", numerator)
 
 	// ******* normalization *******
 
 	normalization := 0.0
+	// main, err := node.P()
 	// set the value of node of interest to each value
 	for _, assign := range []string{"T", "F"} {
 		// assign truth value
 		node.SetAssignmentValue(assign)
-		// sample the probability given the assignment
-		nodeProb, err := node.P()
-		if err != nil {
-			return err
-		}
+		// // sample the probability given the assignment
+		sampleProb := node.SampleOnCondition(assign)
+
 		// now sample the children given the sampled node of interest
+		// nodeProb := 1.0
 		for _, childNode := range node.GetChildren() {
 			prob, err := childNode.P()
-			// fmt.Println(prob)
 			if err != nil {
 				return err
 			}
-			nodeProb *= prob
+			sampleProb *= prob
 		}
 
-		fmt.Printf("nodeProb= %.2f\n", nodeProb)
+		// fmt.Printf("nodeProb == %.2f\n", nodeProb)
 
-		normalization += nodeProb
+		normalization += sampleProb
 	}
-	// fmt.Printf("\tnorm: %.2f\n", normalization)
 
 	markovProb := numerator / normalization
 
-	fmt.Printf("\t%.2f / %.2f = %.2f\n", numerator, normalization, markovProb)
-
-	// fmt.Printf("\tprob: %.2f\n", markovProb)
-
+	// // fmt.Printf("\t%.2f / %.2f = %.2f\n", numerator, normalization, markovProb)
 	random := rand.Float64()
 	if random > markovProb {
 		node.SetAssignmentValue("F")
@@ -174,9 +184,8 @@ func (bn *BayesianNetwork) MarkovBlanketSample(node *Node) error {
 		node.SetAssignmentValue("T")
 	}
 
-	fmt.Printf("%s => %s\n", node.Name(), node.assignment)
+	// fmt.Printf("%s => %s\n", node.Name(), node.AssignmentValue())
 	return nil
-
 }
 
 // Given a truth-assignment for a markov blanket,

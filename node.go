@@ -99,12 +99,6 @@ func (self *Node) computeKey() (string, error) {
 // Generate the CPT lookup-key from parent assignment variables
 // - if this has already been generated, returned cached value
 func (self *Node) GetCPTProbability() (float64, error) {
-	// cache key (can be very expensive to generate)
-	// if self.keyCache == "" {
-	// 	if err := self.computeKey(); err != nil {
-	// 		return 0.0, err
-	// 	}
-	// }
 	key, err := self.computeKey()
 	if err != nil {
 		return 0.0, err
@@ -115,6 +109,20 @@ func (self *Node) GetCPTProbability() (float64, error) {
 	}
 
 	return 0.0, fmt.Errorf("'%s' not a valid node key for CPT: %v", key, self.cpt)
+}
+
+func (self *Node) SampleOnCondition(assignment string) float64 {
+
+	prob, err := self.GetCPTProbability()
+	if err != nil {
+		panic(err)
+	}
+
+	if assignment == "F" {
+		return 1 - prob
+	}
+
+	return prob
 }
 
 // Sample returns the assignment T/F and the probability
