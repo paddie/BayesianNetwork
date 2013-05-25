@@ -1,3 +1,4 @@
+// A DAG (Directed Acyclic Graph) implementation of a Bayesian Network enabling Ancestral Sampling and Gibbs Sampling on Binary Discrete Variables
 package BayesianNetwork
 
 import (
