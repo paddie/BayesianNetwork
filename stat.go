@@ -14,7 +14,7 @@ type NetworkStat struct {
 
 type StatMap map[string][]float64
 
-func NewStat(bn *BayesianNetwork) *NetworkStat {
+func NewNetworkStat(bn *BayesianNetwork) *NetworkStat {
 	return &NetworkStat{
 		bn:    bn,
 		total: 0,
@@ -22,9 +22,11 @@ func NewStat(bn *BayesianNetwork) *NetworkStat {
 	}
 }
 
+// run through the entire network and increment
+// if the value is "T", else ignore
 func (stat *NetworkStat) Update() {
 	for i, node := range stat.bn.nodeIndex {
-		assignment := node.AssignmentValue()
+		assignment := node.GetAssignment()
 		if assignment == "F" {
 			continue
 		}
@@ -33,6 +35,7 @@ func (stat *NetworkStat) Update() {
 	stat.total += 1
 }
 
+// return a mapping of the normalized probablilities
 func (stat *NetworkStat) GetStats() StatMap {
 	stats := make(map[string][]float64, len(stat.count))
 

@@ -38,6 +38,7 @@ type Node struct {
 	// - the value returned in a CPT lookup
 	//   is always the "T" value.
 	cpt map[string]float64
+	// key strisdfdskklloiuygfdsasdfghjkng
 	// after a node has been sampled
 	// this will contain the 
 	// key generated from the truth assignments 
@@ -69,6 +70,14 @@ func NewNode(name string, parents []string, dist map[string]float64) *Node {
 		childIds:    make([]*Node, 0, 4),
 		cpt:         dist,
 	}
+
+	// var buffer bytes.Buffer
+	// for _ = range parents {
+	// 	buffer.WriteString("-")
+	// }
+
+	// node.key = buffer.String()
+
 	return node
 }
 
@@ -84,7 +93,7 @@ func (self *Node) computeKey() string {
 	// generate key from parent assignments
 	var buffer bytes.Buffer
 	for _, id := range self.parentIds {
-		av := id.AssignmentValue()
+		av := id.GetAssignment()
 		// one of the parents have not been sampled
 		// - error because this should never happen
 		//   if we sort on the index
@@ -140,12 +149,15 @@ func (self *Node) Sample() string {
 	if random > cptProb {
 		return "F"
 	}
-
 	return "T"
 }
 
 func (self *Node) P() float64 {
 	return self.CPT()
+}
+
+func (self *Node) PFalse() float64 {
+	return 1 - self.CPT()
 }
 
 func (self *Node) NumParents() int {
@@ -230,7 +242,7 @@ func (self *Node) String() string {
 		self.name, self.id, self.cpt, self.parentIds, self.childIds)
 }
 
-func (self *Node) ValidateParents(parents []string) bool {
+func (self *Node) validateParents(parents []string) bool {
 	if len(parents) != len(self.parentIds) {
 		return false
 	}
@@ -243,15 +255,11 @@ func (self *Node) ValidateParents(parents []string) bool {
 	return true
 }
 
-// func (self *Node) ResetKey() {
-// 	self.keyCache = ""
-// }
-
 func (self *Node) Reset() {
 	self.assignment = ""
 }
 
-func (self *Node) AssignmentValue() string {
+func (self *Node) GetAssignment() string {
 	return self.assignment
 }
 
@@ -262,7 +270,7 @@ func (self *Node) IsRoot() bool {
 	return false
 }
 
-func (self *Node) SetAssignmentValue(value string) {
+func (self *Node) SetAssignment(value string) {
 	self.assignment = value
 	// for _, child := range self.childIds {
 	// 	child.ResetKey()
@@ -326,9 +334,9 @@ func (self BayNodes) String() string {
 	buffer.WriteString(" ")
 	for _, node := range self {
 		buffer.WriteString(node.Name())
-		if node.AssignmentValue() != "" {
+		if node.GetAssignment() != "" {
 			buffer.WriteString("(")
-			s := node.AssignmentValue()
+			s := node.GetAssignment()
 			buffer.WriteString(s)
 			buffer.WriteString(")")
 		}
